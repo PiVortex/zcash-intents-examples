@@ -11,14 +11,40 @@ import json
 
 RPC_URL = "https://free.rpc.fastnear.com"
 INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
-GAS = 30 * 10 ** 12
+GAS = 300 * 10 ** 12
 
 async def register_pub_key(account, public_key):
-    await account.function_call("intents.near", "add_public_key", {
+    result = await account.view_function("intents.near", "has_public_key", {
+        "account_id": account.account_id,
         "public_key": public_key
-    }, GAS, 1)  
+    })
+    is_pub_key = result.result
+    if not is_pub_key:
+        await account.function_call("intents.near", "add_public_key", {
+            "public_key": public_key
+        }, GAS, 1)  
 
-async def deposit_near(account):
+async def register_near_storage(account):
+    account_id = account.account_id;
+    result = await account.view_function("wrap.near", "storage_balance_of", {'account_id': account_id})
+    balance = result.result
+    if not balance:
+        await account.function_call("wrap.near", "storage_deposit", {
+            "account_id": account_id,
+        }, GAS, 1250000000000000000000)
+
+async def deposit_near(account, amount):
+    await register_near_storage(account)
+    # amount is in NEAR
+    yocto_amount = int(amount * 10 ** 24)
+    # Swap to wrapped NEAR
+    result = await account.function_call("wrap.near", "near_deposit", {}, GAS, yocto_amount)
+    # Transfer to intents
+    result = await account.function_call("wrap.near", "ft_transfer_call", {
+        "receiver_id": "intents.near",
+        "amount": str(yocto_amount),
+        "msg": "",
+    }, GAS, 1)
 
 
 async def get_intent_quote():
@@ -58,6 +84,13 @@ async def get_intent_quote():
         quote = result[0]
 
     return quote
+
+# def construct_intent(quote):
+
+
+# def swap_near_to_zec(account, amount):
+
+
 
 async def create_new_near_account():
     # Load environment variables from .env file
@@ -124,12 +157,18 @@ async def use_intents():
     except Exception as e:
         print(e)
 
+    # Deposit 0.01 NEAR into the intents contract
     try:
-        quote = await get_intent_quote()
-        print(quote)
+        await deposit_near(account, 0.01)
     except Exception as e:
         print(e)
 
+    # # Get a quote 
+    # try:
+    #     quote = await get_intent_quote()
+    #     print(quote)
+    # except Exception as e:
+    #     print(e)
 
 
 
