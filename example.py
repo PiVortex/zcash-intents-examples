@@ -1,0 +1,142 @@
+from py_near.providers import JsonProvider
+from py_near.account import Account
+from py_near.dapps.core import NEAR
+from dotenv import load_dotenv
+import os
+import nacl.signing
+import base58
+import asyncio
+import requests
+import json
+
+RPC_URL = "https://free.rpc.fastnear.com"
+INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
+GAS = 30 * 10 ** 12
+
+async def register_pub_key(account, public_key):
+    await account.function_call("intents.near", "add_public_key", {
+        "public_key": public_key
+    }, GAS, 1)  
+
+async def deposit_near(account):
+
+
+async def get_intent_quote():
+    body = {
+        "id": "dontcare",
+        "jsonrpc": "2.0",
+        "method": "quote",
+        "params": [
+            {
+                "defuse_asset_identifier_in": "nep141:wrap.near",
+                "defuse_asset_identifier_out": "nep141:zec.omft.near",
+                "exact_amount_in": "50000000000000000000000",
+            }
+        ]
+    }
+
+    response = requests.post(
+        INTENTS_RPC_URL,
+        json=body,  # requests will automatically handle JSON serialization
+        headers={
+            "Content-Type": "application/json"
+        }
+    )
+
+    # Check if request was successful
+    if not response.ok:
+        raise Exception(
+            f"Request failed {response.status_code} {response.reason} - {response.text}"
+        )
+
+    json_response = response.json()
+    result = json_response["result"]
+
+    if result is None:
+        quote = None
+    else:
+        quote = result[0]
+
+    return quote
+
+async def create_new_near_account():
+    # Load environment variables from .env file
+    load_dotenv()
+
+    # Get private key for creator account from environment variable
+    private_key = os.getenv('CREATOR_PRIVATE_KEY')
+    if not private_key:
+        raise ValueError("CREATOR_PRIVATE_KEY not found in .env file")
+
+    # Account id here is the account that will create the new account
+    account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
+    await account.startup()
+
+    # Generate a new ed25519 key pair for the new NEAR account
+    new_key = nacl.signing.SigningKey.generate()
+    new_public_key = new_key.verify_key.encode()
+    new_private_key = new_key.encode()
+
+    # Convert the public key to NEAR format (base58 encoded)
+    near_public_key = f"ed25519:{base58.b58encode(new_public_key).decode('ascii')}"
+
+    # Create the new account with the generated public key
+    # 0.02 NEAR = 20000000000000000000000 yoctoNEAR
+    initial_balance = 20000000000000000000000  # 0.02 NEAR in yoctoNEAR
+    new_account_id = "account1.zcash-sponsor.near" # Account id for the new NEAR account
+    res = await account.create_account(
+        account_id=new_account_id,
+        public_key=near_public_key,
+        initial_balance=initial_balance
+    )
+
+    # Print the new account's key pair (you should save these securely)
+    print(f"New account public key: {near_public_key}")
+    # Format private key according to NEAR's requirements
+    new_account_private_key = f"ed25519:{base58.b58encode(new_private_key + new_public_key).decode('ascii')}"
+    print(f"New account private key: {new_account_private_key}")
+
+    # Create a new account object for the newly created account
+    new_account = Account(
+        account_id=new_account_id,  # Use the same account ID as created
+        private_key=new_account_private_key,
+        rpc_addr=rpc
+    )
+    await new_account.startup()
+
+async def use_intents():
+    load_dotenv()
+
+    # Get private key for creator account from environment variable
+    private_key = os.getenv('CREATOR_PRIVATE_KEY')
+    public_key = os.getenv('CREATOR_PUBLIC_KEY')
+    if not private_key:
+        raise ValueError("CREATOR_PRIVATE_KEY not found in .env file")
+    if not public_key:
+        raise ValueError("CREATOR_PUBLIC_KEY not found in .env file")
+
+    account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
+    await account.startup()
+
+    # Register intent public key
+    try:
+        await register_pub_key(account, public_key)
+    except Exception as e:
+        print(e)
+
+    try:
+        quote = await get_intent_quote()
+        print(quote)
+    except Exception as e:
+        print(e)
+
+
+
+
+async def main():
+    await use_intents()
+
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
