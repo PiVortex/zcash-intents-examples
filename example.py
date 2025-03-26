@@ -3,8 +3,11 @@ from py_near.account import Account
 from py_near.dapps.core import NEAR
 from dotenv import load_dotenv
 from typing import TypedDict, List, Dict, Union
+import near_api
 import os
 import nacl.signing
+import base64
+import random
 import base58
 import asyncio
 import requests
@@ -15,22 +18,12 @@ INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
 GAS = 300 * 10 ** 12
     
 
-# class AcceptQuote(TypedDict):
-#     nonce: str
-#     recipient: str
-#     message: str
 
-# class Commitment(TypedDict):
-#     standard: str
-#     payload: Union[AcceptQuote, str]
-#     signature: str
-#     public_key: str
+async def generate_nonce():
+    nonce = base64.b64encode(random.getrandbits(256).to_bytes(32, byteorder='big')).decode('utf-8')
+    return nonce
 
-# class PublishIntent(TypedDict):
-#     signed_data: Commitment
-#     quote_hashes: List[str] = []
-
-async def publish_intent(account):
+async def publish_intent(account_id, signer):
     standard = "nep413"
     recipient = "intents.near"
     
@@ -39,7 +32,7 @@ async def publish_intent(account):
     print("Actual amount out: ", float(quote['amount_out']) / 10 ** 8)
     
     message = {
-        "signer_id": account.account_id,  
+        "signer_id": account_id,  
         "deadline": quote["expiration_time"],
         "intents": [
             {
@@ -54,7 +47,18 @@ async def publish_intent(account):
     # Serialize the message to a JSON string
     message_str = json.dumps(message)
     
-    return message_str
+    nonce = await generate_nonce()
+    print("Nonce: ", nonce)
+
+    json_quote = json.dumps(quote)
+    quote_data = json_quote.encode('utf-8')
+    signature = 'ed25519:' + base58.b58encode(signer.sign(quote_data)).decode('utf-8')
+    public_key = 'ed25519:' + base58.b58encode(signer.public_key).decode('utf-8')
+
+    print("Signature: ", signature)
+    print("Public key: ", public_key)
+
+    return 
 
 async def register_pub_key(account, public_key):
     result = await account.view_function("intents.near", "has_public_key", {
@@ -184,8 +188,8 @@ async def use_intents():
     if not public_key:
         raise ValueError("CREATOR_PUBLIC_KEY not found in .env file")
 
-    account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
-    await account.startup()
+    # account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
+    # await account.startup()
 
     # # Register intent public key
     # try:
@@ -199,8 +203,10 @@ async def use_intents():
     # except Exception as e:
     #     print(e)
 
-
-    await publish_intent(account)
+    account_id = "zcash-sponsor.near"
+    key_pair = near_api.signer.KeyPair(private_key)
+    signer = near_api.signer.Signer(account_id, key_pair)
+    await publish_intent(account_id, signer)
 
 async def main():
     await use_intents()
