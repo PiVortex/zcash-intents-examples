@@ -48,17 +48,40 @@ async def publish_intent(account_id, signer):
     message_str = json.dumps(message)
     
     nonce = await generate_nonce()
-    print("Nonce: ", nonce)
 
-    json_quote = json.dumps(quote)
-    quote_data = json_quote.encode('utf-8')
-    signature = 'ed25519:' + base58.b58encode(signer.sign(quote_data)).decode('utf-8')
+    # Create the payload
+    payload = {
+        "message": message_str,
+        "nonce": nonce,
+        "recipient": recipient
+    }
+
+    # Sign the payload
+    json_payload = json.dumps(payload)
+    payload_data = json_payload.encode('utf-8')
+    signature = 'ed25519:' + base58.b58encode(signer.sign(payload_data)).decode('utf-8')
     public_key = 'ed25519:' + base58.b58encode(signer.public_key).decode('utf-8')
 
-    print("Signature: ", signature)
-    print("Public key: ", public_key)
+    # Construct the final intent
+    intent = {
+        "id": "dontcare",
+        "jsonrpc": "2.0",
+        "method": "publish_intent",
+        "params": [
+            {
+                "quote_hashes": [quote["quote_hash"]],
+                "signed_data": {
+                    "standard": standard,
+                    "payload": payload,
+                    "signature": signature,
+                    "public_key": public_key
+                }
+            }
+        ]
+    }
 
-    return 
+    print("Final intent:", json.dumps(intent, indent=2))
+    return intent
 
 async def register_pub_key(account, public_key):
     result = await account.view_function("intents.near", "has_public_key", {
