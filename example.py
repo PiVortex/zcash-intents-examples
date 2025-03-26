@@ -13,6 +13,72 @@ RPC_URL = "https://free.rpc.fastnear.com"
 INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
 GAS = 300 * 10 ** 12
 
+class IntentRequest(object):
+    """IntentRequest is a request to perform an action on behalf of the user."""
+    
+    def __init__(self, request=None, thread=None, min_deadline_ms=120000):
+        self.request = request
+        self.thread = thread
+        self.min_deadline_ms = min_deadline_ms
+        self._asset_in = None
+        self._asset_out = None
+
+    def set_asset_in(self, asset_name, amount):
+        """Set the input asset and amount."""
+        if amount is None:
+            raise ValueError("Input amount cannot be None")
+        
+        decimals_amount = str(int(amount * 10 ** 24))  # Convert to string after calculation
+        self._asset_in = {
+            "asset": "nep141:wrap.near",
+            "amount": decimals_amount
+        }
+        return self
+
+    def set_asset_out(self, asset_name, amount=None):
+        """Set the output asset and optional amount."""
+        if amount is not None:
+            decimals_amount = str(int(amount * 10 ** 18))
+        else:
+            decimals_amount = None
+        
+        self._asset_out = {
+            "asset": "nep141:zec.omft.near",
+            "amount": decimals_amount
+        }
+        return self
+
+    def serialize(self):
+        """Serialize the request to the format expected by the solver bus."""
+        if not self._asset_in or not self._asset_out:
+            raise ValueError("Both input and output assets must be specified")
+            
+        message = {
+            "defuse_asset_identifier_in": self._asset_in["asset"],
+            "defuse_asset_identifier_out": self._asset_out["asset"],
+            "exact_amount_in": self._asset_in["amount"],
+            "min_deadline_ms": self.min_deadline_ms
+        }
+        
+        if self._asset_out["amount"] is not None:
+            message["exact_amount_out"] = self._asset_out["amount"]
+            
+        return message
+
+def fetch_options(request):
+    """Fetches the trading options from the solver bus."""
+    rpc_request = {
+        "id": "dontcare",
+        "jsonrpc": "2.0",
+        "method": "quote",
+        "params": [request.serialize()]
+    }
+    print(f"Sending request to solver bus: {json.dumps(rpc_request, indent=2)}")
+    response = requests.post(INTENTS_RPC_URL, json=rpc_request)
+    response_json = response.json()
+    print(f"Received response from solver bus: {json.dumps(response_json, indent=2)}")
+    return response_json.get("result", [])        
+
 async def register_pub_key(account, public_key):
     result = await account.view_function("intents.near", "has_public_key", {
         "account_id": account.account_id,
@@ -47,50 +113,51 @@ async def deposit_near(account, amount):
     }, GAS, 1)
 
 
-async def get_intent_quote():
-    body = {
-        "id": "dontcare",
-        "jsonrpc": "2.0",
-        "method": "quote",
-        "params": [
-            {
-                "defuse_asset_identifier_in": "nep141:wrap.near",
-                "defuse_asset_identifier_out": "nep141:zec.omft.near",
-                "exact_amount_in": "50000000000000000000000",
-            }
-        ]
-    }
+# async def get_intent_quote():
+#     body = {
+#         "id": "dontcare",
+#         "jsonrpc": "2.0",
+#         "method": "quote",
+#         "params": [
+#             {
+#                 "defuse_asset_identifier_in": "nep141:wrap.near",
+#                 "defuse_asset_identifier_out": "nep141:zec.omft.near",
+#                 "exact_amount_in": "50000000000000000000000",
+#             }
+#         ]
+#     }
 
-    response = requests.post(
-        INTENTS_RPC_URL,
-        json=body,  # requests will automatically handle JSON serialization
-        headers={
-            "Content-Type": "application/json"
-        }
-    )
+#     response = requests.post(
+#         INTENTS_RPC_URL,
+#         json=body,  # requests will automatically handle JSON serialization
+#         headers={
+#             "Content-Type": "application/json"
+#         }
+#     )
 
-    # Check if request was successful
-    if not response.ok:
-        raise Exception(
-            f"Request failed {response.status_code} {response.reason} - {response.text}"
-        )
+#     # Check if request was successful
+#     if not response.ok:
+#         raise Exception(
+#             f"Request failed {response.status_code} {response.reason} - {response.text}"
+#         )
 
-    json_response = response.json()
-    result = json_response["result"]
+#     json_response = response.json()
+#     result = json_response["result"]
 
-    if result is None:
-        quote = None
-    else:
-        quote = result[0]
+#     if result is None:
+#         quote = None
+#     else:
+#         quote = result[0]
 
-    return quote
+#     return quote
 
-# def construct_intent(quote):
-
-
-# def swap_near_to_zec(account, amount):
-
-
+async def swap_near_to_zec(account, amount):
+    request = IntentRequest()
+    request.set_asset_in("NEAR", float(amount))
+    request.set_asset_out("ZEC") 
+    print(request.serialize())
+    options = fetch_options(request)
+    print(options)
 
 async def create_new_near_account():
     # Load environment variables from .env file
@@ -151,17 +218,17 @@ async def use_intents():
     account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
     await account.startup()
 
-    # Register intent public key
-    try:
-        await register_pub_key(account, public_key)
-    except Exception as e:
-        print(e)
+    # # Register intent public key
+    # try:
+    #     await register_pub_key(account, public_key)
+    # except Exception as e:
+    #     print(e)
 
-    # Deposit 0.01 NEAR into the intents contract
-    try:
-        await deposit_near(account, 0.01)
-    except Exception as e:
-        print(e)
+    # # Deposit 0.01 NEAR into the intents contract
+    # try:
+    #     await deposit_near(account, 0.01)
+    # except Exception as e:
+    #     print(e)
 
     # # Get a quote 
     # try:
@@ -169,6 +236,12 @@ async def use_intents():
     #     print(quote)
     # except Exception as e:
     #     print(e)
+
+    # Swap from NEAR to ZEC
+    try:
+        await swap_near_to_zec(account, 0.01)
+    except Exception as e:
+        print(e)
 
 
 
