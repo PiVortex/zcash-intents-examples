@@ -322,36 +322,34 @@ async def execute_intent(account_id: str, signer, quote: dict):
 
     return result
 
-async def publish_intent(account_id, signer):
-    try:
-        quote = await get_quote(0.01)
-        print("Actual amount out: ", float(quote['amount_out']) / 10 ** 8)
-        
-        result = await execute_intent(account_id, signer, quote)
-        return result
-    except Exception as e:
-        print(f"Failed to execute intent: {e}")
-        return None
-
 async def register_pub_key(account, public_key):
     result = await account.view_function("intents.near", "has_public_key", {
         "account_id": account.account_id,
         "public_key": public_key
     })
     is_pub_key = result.result
+    print(f"Is pub key: {is_pub_key}")
     if not is_pub_key:
-        await account.function_call("intents.near", "add_public_key", {
+        result = await account.function_call("intents.near", "add_public_key", {
             "public_key": public_key
         }, GAS, 1)  
+        print(f"Result: {result}")
+    else:
+        print("Public key already registered")
 
 async def register_near_storage(account):
     account_id = account.account_id;
     result = await account.view_function("wrap.near", "storage_balance_of", {'account_id': account_id})
     balance = result.result
+    print(f"Balance: {balance}")
     if not balance:
-        await account.function_call("wrap.near", "storage_deposit", {
+        result = await account.function_call("wrap.near", "storage_deposit", {
             "account_id": account_id,
         }, GAS, 1250000000000000000000)
+        print(f"Result: {result}")
+        print("Storage deposit successful")
+    else:
+        print("Storage already registered")
 
 async def deposit_near(account, amount):
     await register_near_storage(account)
@@ -366,7 +364,7 @@ async def deposit_near(account, amount):
         "msg": "",
     }, GAS, 1)
 
-async def create_new_near_account():
+async def create_new_near_account(account_id: str, initial_balance: int):
     # Load environment variables from .env file
     load_dotenv()
 
@@ -374,9 +372,12 @@ async def create_new_near_account():
     private_key = os.getenv('CREATOR_PRIVATE_KEY')
     if not private_key:
         raise ValueError("CREATOR_PRIVATE_KEY not found in .env file")
+    creator_account_id = os.getenv('CREATOR_ACCOUNT_ID')
+    if not creator_account_id:
+        raise ValueError("CREATOR_ACCOUNT_ID not found in .env file")
 
     # Account id here is the account that will create the new account
-    account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
+    account = Account(account_id=creator_account_id, private_key=private_key, rpc_addr=RPC_URL)
     await account.startup()
 
     # Generate a new ed25519 key pair for the new NEAR account
@@ -388,58 +389,51 @@ async def create_new_near_account():
     near_public_key = f"ed25519:{base58.b58encode(new_public_key).decode('ascii')}"
 
     # Create the new account with the generated public key
-    # 0.02 NEAR = 20000000000000000000000 yoctoNEAR
-    initial_balance = 20000000000000000000000  # 0.02 NEAR in yoctoNEAR
-    new_account_id = "account1.zcash-sponsor.near" # Account id for the new NEAR account
     res = await account.create_account(
-        account_id=new_account_id,
+        account_id=account_id,
         public_key=near_public_key,
         initial_balance=initial_balance
     )
 
     # Print the new account's key pair (you should save these securely)
-    print(f"New account public key: {near_public_key}")
     # Format private key according to NEAR's requirements
     new_account_private_key = f"ed25519:{base58.b58encode(new_private_key + new_public_key).decode('ascii')}"
-    print(f"New account private key: {new_account_private_key}")
 
-    # Create a new account object for the newly created account
-    new_account = Account(
-        account_id=new_account_id,  # Use the same account ID as created
-        private_key=new_account_private_key,
-        rpc_addr=rpc
-    )
-    await new_account.startup()
+    return new_account_private_key, near_public_key
 
 async def main():
-    load_dotenv()
+    # Example usage of functions
 
-    # Get private key for creator account from environment variable
-    private_key = os.getenv('CREATOR_PRIVATE_KEY')
-    public_key = os.getenv('CREATOR_PUBLIC_KEY')
-    if not private_key:
-        raise ValueError("CREATOR_PRIVATE_KEY not found in .env file")
-    if not public_key:
-        raise ValueError("CREATOR_PUBLIC_KEY not found in .env file")
-
-    account_id = "zcash-sponsor.near"
-    
-    # Create account object for deposit
-    account = Account(account_id=account_id, private_key=private_key, rpc_addr=RPC_URL)
-    await account.startup()
+    # Variables are defined here, this is what you need to fetch from the UI
+    new_account_name = "account4.zcash-sponsor.near"
+    initial_balance = 20000000000000000000000 # 0.02 NEAR in yoctoNEAR
+    near_to_zcash = True # True for NEAR->ZEC, False for ZEC->NEAR
+    amount = 0.01 if near_to_zcash else 0.001 # Amount to swap
 
     try:
-        # Create signer for intent execution
-        key_pair = near_api.signer.KeyPair(private_key)
-        signer = near_api.signer.Signer(account_id, key_pair)
+        # Create a new near account for the user
+        (new_account_private_key, new_account_public_key) = await create_new_near_account(new_account_name, initial_balance)
+        print(f"New account public key: {new_account_public_key}")
+        print(f"New account private key: {new_account_private_key}")
 
-        # Specify swap direction
-        near_to_zcash = False  # Change this to True for NEAR->ZEC, False for ZEC->NEAR
-        
-        # Set amount based on direction (0.01 NEAR or 0.001 ZEC as examples)
-        amount = 0.01 if near_to_zcash else 0.001
-        
-        # Get quote with specified direction
+        # Create signer for intent execution
+        key_pair = near_api.signer.KeyPair(new_account_private_key)
+        signer = near_api.signer.Signer(new_account_name, key_pair)
+        # Create account object for the new account
+        new_account = Account(account_id=new_account_name, private_key=new_account_private_key, rpc_addr=RPC_URL)
+        await new_account.startup()
+
+        # At this stage  the user needs to deposit NEAR to their new account
+        # In this example we are funding the account with 0.02 NEAR on account creation
+
+        # Register public key
+        # This is only needed if the account is new
+        await register_pub_key(new_account, new_account_public_key)
+        # Register near storage
+        # This is only needed if the account is new
+        await register_near_storage(new_account)
+
+        # Get quote for the swap
         quote = await get_quote(amount, near_to_zcash)
         
         # Print appropriate message based on direction
@@ -452,24 +446,35 @@ async def main():
             print(f"Input: {float(quote['amount_in'])/10**8:.8f} ZEC")
             print(f"Output: {float(quote['amount_out'])/10**24:.6f} NEAR")
         
-        # Check quote expiration
-        # Convert ISO 8601 timestamp to Unix timestamp
+        # Print the quote expiration time
         expiration_time = int(datetime.strptime(quote["expiration_time"], "%Y-%m-%dT%H:%M:%S.%fZ").timestamp())
         current_time = int(time.time())
         time_left = expiration_time - current_time
         print(f"Quote valid for: {time_left} seconds ({time_left/60:.2f} minutes)")
 
         if near_to_zcash:
-            # Deposit 0.01 NEAR
-            print("Depositing 0.01 NEAR...")
-            await deposit_near(account, amount)
+            # Deposit NEAR
+            print("Depositing NEAR...")
+            await deposit_near(new_account, amount)
             print("Deposit successful")
         else:
             # TODO: Deposit ZEC
+            print("Depositing ZEC...")
 
         # Execute the intent with the quote
-        result = await execute_intent(account_id, signer, quote)
+        result = await execute_intent(new_account_name, signer, quote)
         print("Intent execution result:", result)
+
+        if near_to_zcash:
+            # TODO: Withdraw ZEC
+            print("Withdrawing ZEC...")
+        else:
+            # TODO: Withdraw NEAR
+            print("Withdrawing NEAR...")
+            # TODO: Unwrap NEAR
+            print("Unwrapping NEAR...")
+
+        
     except Exception as e:
         print(f"Failed to execute intent: {e}")
 
