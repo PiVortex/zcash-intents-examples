@@ -399,6 +399,14 @@ async def create_new_near_account(account_id: str, initial_balance: int):
 
     return new_account_private_key, near_public_key
 
+async def create_new_zcash_account(account_id: str, initial_balance: int):
+    # Randomly generate a private key 
+    
+    # Generate an address
+
+    return zcash_private_key, zcash_address
+
+
 async def wait_for_account_ready(account, max_attempts=10):
     """Wait for account to be ready on chain"""
     for i in range(max_attempts):
@@ -410,19 +418,27 @@ async def wait_for_account_ready(account, max_attempts=10):
             await asyncio.sleep(1)  # Wait 1 second between attempts
     return False
 
+async def send_near(account, amount, receiver_id):
+    yocto_amount = int(amount * 10 ** 24)
+    result = await account.send_money(receiver_id, yocto_amount)
+
 async def main():
     # Variables are defined here, this is what you need to fetch from the UI
-    new_account_name = "account11.zcash-sponsor.near"
+    # new_account_name = "account11.zcash-sponsor.near"
+
+    new_account_name = "zcash-sponsor.near"
+    load_dotenv()
+    new_account_private_key = os.getenv('CREATOR_PRIVATE_KEY')
     initial_balance = 50000000000000000000000 # 0.05 NEAR in yoctoNEAR
     near_to_zcash = True # True for NEAR->ZEC, False for ZEC->NEAR
     amount = 0.01 if near_to_zcash else 0.001 # Amount to swap
 
     try:
         # Create a new near account for the user
-        print("\nCreating new account...")
-        (new_account_private_key, new_account_public_key) = await create_new_near_account(new_account_name, initial_balance)
-        print(f"New account public key: {new_account_public_key}")
-        print(f"New account private key: {new_account_private_key}")
+        # print("\nCreating new account...")
+        # (new_account_private_key, new_account_public_key) = await create_new_near_account(new_account_name, initial_balance)
+        # print(f"New account public key: {new_account_public_key}")
+        # print(f"New account private key: {new_account_private_key}")
 
         # Create account object for the new account
         new_account = Account(account_id=new_account_name, private_key=new_account_private_key, rpc_addr=RPC_URL)
@@ -489,6 +505,9 @@ async def main():
             print("Unwrapping NEAR...")
 
         
+        await send_near(new_account, 0.01, "account1.zcash-sponsor.near")
+
+
     except Exception as e:
         print(f"Failed to execute intent: {e}")
 
