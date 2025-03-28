@@ -20,8 +20,7 @@ from datetime import datetime
 
 RPC_URL = "https://free.rpc.fastnear.com"
 INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
-GAS = 300 * 10 ** 12
-    
+GAS = 40 * 10 ** 12    
 
 class BinarySerializer:
     def __init__(self, schema):
@@ -330,6 +329,7 @@ async def register_pub_key(account, public_key):
     is_pub_key = result.result
     print(f"Is pub key: {is_pub_key}")
     if not is_pub_key:
+        print("Registering public key...")
         result = await account.function_call("intents.near", "add_public_key", {
             "public_key": public_key
         }, GAS, 1)  
@@ -351,9 +351,7 @@ async def register_near_storage(account):
     else:
         print("Storage already registered")
 
-async def deposit_near(account, amount):
-    await register_near_storage(account)
-    # amount is in NEAR
+async def deposit_near(account, amount):    # amount is in NEAR
     yocto_amount = int(amount * 10 ** 24)
     # Swap to wrapped NEAR
     result = await account.function_call("wrap.near", "near_deposit", {}, GAS, yocto_amount)
@@ -401,36 +399,52 @@ async def create_new_near_account(account_id: str, initial_balance: int):
 
     return new_account_private_key, near_public_key
 
-async def main():
-    # Example usage of functions
+async def wait_for_account_ready(account, max_attempts=10):
+    """Wait for account to be ready on chain"""
+    for i in range(max_attempts):
+        try:
+            state = await account.fetch_state()
+            return True
+        except Exception as e:
+            print(f"Waiting for account to be ready (attempt {i+1}/{max_attempts})...")
+            await asyncio.sleep(1)  # Wait 1 second between attempts
+    return False
 
+async def main():
     # Variables are defined here, this is what you need to fetch from the UI
-    new_account_name = "account4.zcash-sponsor.near"
-    initial_balance = 20000000000000000000000 # 0.02 NEAR in yoctoNEAR
+    new_account_name = "account11.zcash-sponsor.near"
+    initial_balance = 50000000000000000000000 # 0.05 NEAR in yoctoNEAR
     near_to_zcash = True # True for NEAR->ZEC, False for ZEC->NEAR
     amount = 0.01 if near_to_zcash else 0.001 # Amount to swap
 
     try:
         # Create a new near account for the user
+        print("\nCreating new account...")
         (new_account_private_key, new_account_public_key) = await create_new_near_account(new_account_name, initial_balance)
         print(f"New account public key: {new_account_public_key}")
         print(f"New account private key: {new_account_private_key}")
 
-        # Create signer for intent execution
-        key_pair = near_api.signer.KeyPair(new_account_private_key)
-        signer = near_api.signer.Signer(new_account_name, key_pair)
         # Create account object for the new account
         new_account = Account(account_id=new_account_name, private_key=new_account_private_key, rpc_addr=RPC_URL)
         await new_account.startup()
 
-        # At this stage  the user needs to deposit NEAR to their new account
-        # In this example we are funding the account with 0.02 NEAR on account creation
+        # Wait for account to be ready
+        print("\nWaiting for account to be ready...")
+        if not await wait_for_account_ready(new_account):
+            raise Exception("Account not ready after maximum attempts")
+
+        # Create signer for intent execution
+        key_pair = near_api.signer.KeyPair(new_account_private_key)
+        signer = near_api.signer.Signer(new_account_name, key_pair)
 
         # Register public key
-        # This is only needed if the account is new
+        # Only needed if this is the first swap
+        print("\nRegistering public key...")
         await register_pub_key(new_account, new_account_public_key)
+        
         # Register near storage
-        # This is only needed if the account is new
+        # Only needed if this is the first swap
+        print("\nRegistering storage...")
         await register_near_storage(new_account)
 
         # Get quote for the swap
