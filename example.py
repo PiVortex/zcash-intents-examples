@@ -17,6 +17,9 @@ from borsh_construct import U32
 import secrets
 import time
 from datetime import datetime
+import struct
+import binascii
+from zcash import *
 
 RPC_URL = "https://free.rpc.fastnear.com"
 INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
@@ -399,13 +402,47 @@ async def create_new_near_account(account_id: str, initial_balance: int):
 
     return new_account_private_key, near_public_key
 
-async def create_new_zcash_account(account_id: str, initial_balance: int):
-    # Randomly generate a private key 
+def create_new_zcash_account():
+    """Create a new Zcash account with private key and t-address"""
+    # Generate private key using sha256 of a random value
+    priv = random_key()
     
-    # Generate an address
+    # Get address
+    addr = privtoaddr(priv)
+    
+    return priv, addr
 
-    return zcash_private_key, zcash_address
-
+async def send_zcash(from_private_key: str, to_address: str, amount: float):
+    """
+    Send Zcash from one address to another using PyZcashtools
+    
+    Args:
+        from_private_key (str): Private key of sending address
+        to_address (str): Receiving Zcash address 
+        amount (float): Amount of ZEC to send
+    """
+    try:
+        # Get history/UTXOs for the sending address
+        from_address = privtoaddr(from_private_key)
+        h = history(from_address)
+        
+        # Create output for the transaction
+        outs = [{'value': int(amount * 10**8), 'address': to_address}]
+        
+        # Create and sign transaction
+        tx = mktx(h, outs)
+        
+        # Sign all inputs
+        for i in range(len(h)):
+            tx = sign(tx, i, from_private_key)
+        
+        # Push transaction to network
+        result = pushtx(tx)
+        
+        return result
+        
+    except Exception as e:
+        raise Exception(f"Failed to send Zcash: {str(e)}")
 
 async def wait_for_account_ready(account, max_attempts=10):
     """Wait for account to be ready on chain"""
@@ -434,6 +471,15 @@ async def main():
     amount = 0.01 if near_to_zcash else 0.001 # Amount to swap
 
     try:
+        # Create a new zcash account for the user
+        # Make sure to save the private key and address
+        # print("\nCreating new zcash account...")
+        # (zcash_private_key, zcash_address) = create_new_zcash_account()
+        # print(f"New zcash account address: {zcash_address}")
+        # print(f"New zcash account private key: {zcash_private_key}")
+
+        # Create a new near account for the user
+        # print("\nCreating new account...")
         # Create a new near account for the user
         # print("\nCreating new account...")
         # (new_account_private_key, new_account_public_key) = await create_new_near_account(new_account_name, initial_balance)
@@ -441,71 +487,71 @@ async def main():
         # print(f"New account private key: {new_account_private_key}")
 
         # Create account object for the new account
-        new_account = Account(account_id=new_account_name, private_key=new_account_private_key, rpc_addr=RPC_URL)
-        await new_account.startup()
+        # new_account = Account(account_id=new_account_name, private_key=new_account_private_key, rpc_addr=RPC_URL)
+        # await new_account.startup()
 
-        # Wait for account to be ready
-        print("\nWaiting for account to be ready...")
-        if not await wait_for_account_ready(new_account):
-            raise Exception("Account not ready after maximum attempts")
+        # # Wait for account to be ready
+        # print("\nWaiting for account to be ready...")
+        # if not await wait_for_account_ready(new_account):
+        #     raise Exception("Account not ready after maximum attempts")
 
-        # Create signer for intent execution
-        key_pair = near_api.signer.KeyPair(new_account_private_key)
-        signer = near_api.signer.Signer(new_account_name, key_pair)
+        # # Create signer for intent execution
+        # key_pair = near_api.signer.KeyPair(new_account_private_key)
+        # signer = near_api.signer.Signer(new_account_name, key_pair)
 
-        # Register public key
-        # Only needed if this is the first swap
-        print("\nRegistering public key...")
-        await register_pub_key(new_account, new_account_public_key)
+        # # Register public key
+        # # Only needed if this is the first swap
+        # print("\nRegistering public key...")
+        # await register_pub_key(new_account, new_account_public_key)
         
-        # Register near storage
-        # Only needed if this is the first swap
-        print("\nRegistering storage...")
-        await register_near_storage(new_account)
+        # # Register near storage
+        # # Only needed if this is the first swap
+        # print("\nRegistering storage...")
+        # await register_near_storage(new_account)
 
-        # Get quote for the swap
-        quote = await get_quote(amount, near_to_zcash)
+        # # Get quote for the swap
+        # quote = await get_quote(amount, near_to_zcash)
         
-        # Print appropriate message based on direction
-        if near_to_zcash:
-            print(f"\nSwapping NEAR to ZEC:")
-            print(f"Input: {float(quote['amount_in'])/10**24:.6f} NEAR")
-            print(f"Output: {float(quote['amount_out'])/10**8:.8f} ZEC")
-        else:
-            print(f"\nSwapping ZEC to NEAR:")
-            print(f"Input: {float(quote['amount_in'])/10**8:.8f} ZEC")
-            print(f"Output: {float(quote['amount_out'])/10**24:.6f} NEAR")
+        # # Print appropriate message based on direction
+        # if near_to_zcash:
+        #     print(f"\nSwapping NEAR to ZEC:")
+        #     print(f"Input: {float(quote['amount_in'])/10**24:.6f} NEAR")
+        #     print(f"Output: {float(quote['amount_out'])/10**8:.8f} ZEC")
+        # else:
+        #     print(f"\nSwapping ZEC to NEAR:")
+        #     print(f"Input: {float(quote['amount_in'])/10**8:.8f} ZEC")
+        #     print(f"Output: {float(quote['amount_out'])/10**24:.6f} NEAR")
         
-        # Print the quote expiration time
-        expiration_time = int(datetime.strptime(quote["expiration_time"], "%Y-%m-%dT%H:%M:%S.%fZ").timestamp())
-        current_time = int(time.time())
-        time_left = expiration_time - current_time
-        print(f"Quote valid for: {time_left} seconds ({time_left/60:.2f} minutes)")
+        # # Print the quote expiration time
+        # expiration_time = int(datetime.strptime(quote["expiration_time"], "%Y-%m-%dT%H:%M:%S.%fZ").timestamp())
+        # current_time = int(time.time())
+        # time_left = expiration_time - current_time
+        # print(f"Quote valid for: {time_left} seconds ({time_left/60:.2f} minutes)")
 
-        if near_to_zcash:
-            # Deposit NEAR
-            print("Depositing NEAR...")
-            await deposit_near(new_account, amount)
-            print("Deposit successful")
-        else:
-            # TODO: Deposit ZEC
-            print("Depositing ZEC...")
+        # if near_to_zcash:
+        #     # Deposit NEAR
+        #     print("Depositing NEAR...")
+        #     await deposit_near(new_account, amount)
+        #     print("Deposit successful")
+        # else:
+        #     # TODO: Deposit ZEC
+        #     print("Depositing ZEC...")
 
-        # Execute the intent with the quote
-        result = await execute_intent(new_account_name, signer, quote)
-        print("Intent execution result:", result)
+        # # Execute the intent with the quote
+        # result = await execute_intent(new_account_name, signer, quote)
+        # print("Intent execution result:", result)
 
-        if near_to_zcash:
-            # TODO: Withdraw ZEC
-            print("Withdrawing ZEC...")
-        else:
-            # TODO: Withdraw NEAR
-            print("Withdrawing NEAR...")
-            # TODO: Unwrap NEAR
-            print("Unwrapping NEAR...")
+        # if near_to_zcash:
+        #     # TODO: Withdraw ZEC
+        #     print("Withdrawing ZEC...")
+        # else:
+        #     # TODO: Withdraw NEAR
+        #     print("Withdrawing NEAR...")
+        #     # TODO: Unwrap NEAR
+        #     print("Unwrapping NEAR...")
 
         
-        await send_near(new_account, 0.01, "account1.zcash-sponsor.near")
+        # await send_near(new_account, 0.01, "account1.zcash-sponsor.near")
 
 
     except Exception as e:
