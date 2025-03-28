@@ -15,6 +15,8 @@ import json
 import hashlib
 from borsh_construct import U32
 import secrets
+import time
+from datetime import datetime
 
 RPC_URL = "https://free.rpc.fastnear.com"
 INTENTS_RPC_URL = "https://solver-relay-v2.chaindefuser.com/rpc"
@@ -293,8 +295,6 @@ async def execute_intent(account_id: str, signer, quote: dict):
             }
         ]
     }
-
-    print("Final intent:", json.dumps(intent, indent=2))
     
     # Send the intent to the RPC endpoint
     response = requests.post(
@@ -312,7 +312,6 @@ async def execute_intent(account_id: str, signer, quote: dict):
 
     json_response = response.json()
     result = json_response.get("result")
-    print("Intent result:", json.dumps(result))
 
     return result
 
@@ -405,7 +404,7 @@ async def create_new_near_account():
     )
     await new_account.startup()
 
-async def use_intents():
+async def main():
     load_dotenv()
 
     # Get private key for creator account from environment variable
@@ -423,11 +422,6 @@ async def use_intents():
     await account.startup()
 
     try:
-        # First deposit 0.01 NEAR
-        print("Depositing 0.01 NEAR...")
-        await deposit_near(account, 0.01)
-        print("Deposit successful")
-
         # Create signer for intent execution
         key_pair = near_api.signer.KeyPair(private_key)
         signer = near_api.signer.Signer(account_id, key_pair)
@@ -435,16 +429,24 @@ async def use_intents():
         # Get a quote for 0.01 NEAR
         quote = await get_quote(0.01)
         print(f"Got quote: {float(quote['amount_in'])/10**24} NEAR -> {float(quote['amount_out'])/10**8} ZEC")
+        
+        # Check quote expiration
+        # Convert ISO 8601 timestamp to Unix timestamp
+        expiration_time = int(datetime.strptime(quote["expiration_time"], "%Y-%m-%dT%H:%M:%S.%fZ").timestamp())
+        current_time = int(time.time())
+        time_left = expiration_time - current_time
+        print(f"Quote valid for: {time_left} seconds ({time_left/60:.2f} minutes)")
 
-        # Execute the intent with the quote
-        result = await execute_intent(account_id, signer, quote)
-        print("Intent execution result:", result)
+        # # Deposit 0.01 NEAR
+        # print("Depositing 0.01 NEAR...")
+        # await deposit_near(account, 0.01)
+        # print("Deposit successful")
+
+        # # Execute the intent with the quote
+        # result = await execute_intent(account_id, signer, quote)
+        # print("Intent execution result:", result)
     except Exception as e:
         print(f"Failed to execute intent: {e}")
-
-async def main():
-    await use_intents()
-
 
 
 if __name__ == "__main__":
