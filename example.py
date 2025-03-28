@@ -178,25 +178,32 @@ async def generate_nonce():
     random_array = secrets.token_bytes(32)
     return base64.b64encode(random_array).decode('utf-8')
 
-async def get_quote(amount_in: float):
+async def get_quote(amount_in: float, near_to_zcash: bool = True):
     """
-    Get a quote for swapping NEAR to ZEC
+    Get a quote for swapping between NEAR and ZEC in either direction
     
     Args:
-        amount_in (float): Amount of NEAR to swap
+        amount_in (float): Amount to swap (in NEAR if near_to_zcash=True, in ZEC if near_to_zcash=False)
+        near_to_zcash (bool): Direction of swap. True for NEAR->ZEC, False for ZEC->NEAR
     Returns:
         dict: Quote information
     """
-    amount_in_yocto = str(int(amount_in * 10 ** 24))
+    # Convert amount to proper decimals (NEAR has 24, ZEC has 8)
+    amount_in_smallest = str(int(amount_in * (10 ** 24 if near_to_zcash else 10 ** 8)))
+    
+    # Set asset identifiers based on direction
+    asset_in = "nep141:wrap.near" if near_to_zcash else "nep141:zec.omft.near"
+    asset_out = "nep141:zec.omft.near" if near_to_zcash else "nep141:wrap.near"
+    
     body = {
         "id": "dontcare",
         "jsonrpc": "2.0",
         "method": "quote",
         "params": [
             {
-                "defuse_asset_identifier_in": "nep141:wrap.near",
-                "defuse_asset_identifier_out": "nep141:zec.omft.near",
-                "exact_amount_in": amount_in_yocto,
+                "defuse_asset_identifier_in": asset_in,
+                "defuse_asset_identifier_out": asset_out,
+                "exact_amount_in": amount_in_smallest,
             }
         ]
     }
@@ -426,9 +433,24 @@ async def main():
         key_pair = near_api.signer.KeyPair(private_key)
         signer = near_api.signer.Signer(account_id, key_pair)
 
-        # Get a quote for 0.01 NEAR
-        quote = await get_quote(0.01)
-        print(f"Got quote: {float(quote['amount_in'])/10**24} NEAR -> {float(quote['amount_out'])/10**8} ZEC")
+        # Specify swap direction
+        near_to_zcash = False  # Change this to True for NEAR->ZEC, False for ZEC->NEAR
+        
+        # Set amount based on direction (0.01 NEAR or 0.001 ZEC as examples)
+        amount = 0.01 if near_to_zcash else 0.001
+        
+        # Get quote with specified direction
+        quote = await get_quote(amount, near_to_zcash)
+        
+        # Print appropriate message based on direction
+        if near_to_zcash:
+            print(f"\nSwapping NEAR to ZEC:")
+            print(f"Input: {float(quote['amount_in'])/10**24:.6f} NEAR")
+            print(f"Output: {float(quote['amount_out'])/10**8:.8f} ZEC")
+        else:
+            print(f"\nSwapping ZEC to NEAR:")
+            print(f"Input: {float(quote['amount_in'])/10**8:.8f} ZEC")
+            print(f"Output: {float(quote['amount_out'])/10**24:.6f} NEAR")
         
         # Check quote expiration
         # Convert ISO 8601 timestamp to Unix timestamp
@@ -437,14 +459,17 @@ async def main():
         time_left = expiration_time - current_time
         print(f"Quote valid for: {time_left} seconds ({time_left/60:.2f} minutes)")
 
-        # # Deposit 0.01 NEAR
-        # print("Depositing 0.01 NEAR...")
-        # await deposit_near(account, 0.01)
-        # print("Deposit successful")
+        if near_to_zcash:
+            # Deposit 0.01 NEAR
+            print("Depositing 0.01 NEAR...")
+            await deposit_near(account, amount)
+            print("Deposit successful")
+        else:
+            # TODO: Deposit ZEC
 
-        # # Execute the intent with the quote
-        # result = await execute_intent(account_id, signer, quote)
-        # print("Intent execution result:", result)
+        # Execute the intent with the quote
+        result = await execute_intent(account_id, signer, quote)
+        print("Intent execution result:", result)
     except Exception as e:
         print(f"Failed to execute intent: {e}")
 
