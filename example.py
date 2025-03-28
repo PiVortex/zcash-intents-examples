@@ -176,17 +176,63 @@ async def generate_nonce():
     random_array = secrets.token_bytes(32)
     return base64.b64encode(random_array).decode('utf-8')
 
-async def publish_intent(account_id, signer):
+async def get_quote(amount_in: float):
+    """
+    Get a quote for swapping NEAR to ZEC
+    
+    Args:
+        amount_in (float): Amount of NEAR to swap
+    Returns:
+        dict: Quote information
+    """
+    amount_in_yocto = str(int(amount_in * 10 ** 24))
+    body = {
+        "id": "dontcare",
+        "jsonrpc": "2.0",
+        "method": "quote",
+        "params": [
+            {
+                "defuse_asset_identifier_in": "nep141:wrap.near",
+                "defuse_asset_identifier_out": "nep141:zec.omft.near",
+                "exact_amount_in": amount_in_yocto,
+            }
+        ]
+    }
+
+    response = requests.post(
+        INTENTS_RPC_URL,
+        json=body,
+        headers={
+            "Content-Type": "application/json"
+        }
+    )
+
+    if not response.ok:
+        raise Exception(
+            f"Request failed {response.status_code} {response.reason} - {response.text}"
+        )
+
+    json_response = response.json()
+    result = json_response.get("result")
+
+    if not result or len(result) == 0:
+        raise Exception("No quote available")
+        
+    return result[0]
+
+async def execute_intent(account_id: str, signer, quote: dict):
+    """
+    Execute an intent with a given quote
+    
+    Args:
+        account_id (str): The account executing the intent
+        signer: The signer object for signing the intent
+        quote (dict): The quote to execute
+    Returns:
+        dict: Response from the intent execution
+    """
     standard = "nep413"
     recipient = "intents.near"
-    
-    # Get the quote first
-    try:
-        quote = await get_intent_quote(0.01)
-        print("Actual amount out: ", float(quote['amount_out']) / 10 ** 8)
-    except Exception as e:
-        print(f"Failed to get quote: {e}")
-        return
 
     message = {
         "signer_id": account_id,  
@@ -201,7 +247,6 @@ async def publish_intent(account_id, signer):
             }
         ]
     }    
-    # Serialize the message to a JSON string
     message_str = json.dumps(message)
     
     nonce = await generate_nonce()
@@ -220,7 +265,7 @@ async def publish_intent(account_id, signer):
     hash_to_sign = hashlib.sha256(combined_data).digest()
     
     # Sign the hash
-    signature_bytes = signer.sign(hash_to_sign)  # This returns bytes directly
+    signature_bytes = signer.sign(hash_to_sign)
     signature = 'ed25519:' + base58.b58encode(signature_bytes).decode('utf-8')
     public_key = 'ed25519:' + base58.b58encode(signer.public_key).decode('utf-8')
 
@@ -260,7 +305,6 @@ async def publish_intent(account_id, signer):
         }
     )
 
-    # Check if request was successful
     if not response.ok:
         raise Exception(
             f"Request failed {response.status_code} {response.reason} - {response.text}"
@@ -271,6 +315,17 @@ async def publish_intent(account_id, signer):
     print("Intent result:", json.dumps(result))
 
     return result
+
+async def publish_intent(account_id, signer):
+    try:
+        quote = await get_quote(0.01)
+        print("Actual amount out: ", float(quote['amount_out']) / 10 ** 8)
+        
+        result = await execute_intent(account_id, signer, quote)
+        return result
+    except Exception as e:
+        print(f"Failed to execute intent: {e}")
+        return None
 
 async def register_pub_key(account, public_key):
     result = await account.view_function("intents.near", "has_public_key", {
@@ -304,43 +359,6 @@ async def deposit_near(account, amount):
         "amount": str(yocto_amount),
         "msg": "",
     }, GAS, 1)
-
-async def get_intent_quote(amount_in):
-    amount_in_yocto = str(int(amount_in * 10 ** 24))
-    body = {
-        "id": "dontcare",
-        "jsonrpc": "2.0",
-        "method": "quote",
-        "params": [
-            {
-                "defuse_asset_identifier_in": "nep141:wrap.near",
-                "defuse_asset_identifier_out": "nep141:zec.omft.near",
-                "exact_amount_in": amount_in_yocto,
-            }
-        ]
-    }
-
-    response = requests.post(
-        INTENTS_RPC_URL,
-        json=body,  # requests will automatically handle JSON serialization
-        headers={
-            "Content-Type": "application/json"
-        }
-    )
-
-    # Check if request was successful
-    if not response.ok:
-        raise Exception(
-            f"Request failed {response.status_code} {response.reason} - {response.text}"
-        )
-
-    json_response = response.json()
-    result = json_response.get("result")
-
-    if not result or len(result) == 0:
-        raise Exception("No quote available")
-        
-    return result[0]  # Return the first/best quote
 
 async def create_new_near_account():
     # Load environment variables from .env file
@@ -398,25 +416,31 @@ async def use_intents():
     if not public_key:
         raise ValueError("CREATOR_PUBLIC_KEY not found in .env file")
 
-    # account = Account(account_id="zcash-sponsor.near", private_key=private_key, rpc_addr=RPC_URL)
-    # await account.startup()
-
-    # # Register intent public key
-    # try:
-    #     await register_pub_key(account, public_key)
-    # except Exception as e:
-    #     print(e)
-
-    # # Deposit 0.01 NEAR into the intents contract
-    # try:
-    #     await deposit_near(account, 0.01)
-    # except Exception as e:
-    #     print(e)
-
     account_id = "zcash-sponsor.near"
-    key_pair = near_api.signer.KeyPair(private_key)
-    signer = near_api.signer.Signer(account_id, key_pair)
-    await publish_intent(account_id, signer)
+    
+    # Create account object for deposit
+    account = Account(account_id=account_id, private_key=private_key, rpc_addr=RPC_URL)
+    await account.startup()
+
+    try:
+        # First deposit 0.01 NEAR
+        print("Depositing 0.01 NEAR...")
+        await deposit_near(account, 0.01)
+        print("Deposit successful")
+
+        # Create signer for intent execution
+        key_pair = near_api.signer.KeyPair(private_key)
+        signer = near_api.signer.Signer(account_id, key_pair)
+
+        # Get a quote for 0.01 NEAR
+        quote = await get_quote(0.01)
+        print(f"Got quote: {float(quote['amount_in'])/10**24} NEAR -> {float(quote['amount_out'])/10**8} ZEC")
+
+        # Execute the intent with the quote
+        result = await execute_intent(account_id, signer, quote)
+        print("Intent execution result:", result)
+    except Exception as e:
+        print(f"Failed to execute intent: {e}")
 
 async def main():
     await use_intents()
