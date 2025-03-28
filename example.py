@@ -19,6 +19,22 @@ import time
 from datetime import datetime
 import struct
 import binascii
+import sys
+
+# Python 2/3 compatibility
+is_python2 = sys.version_info[0] == 2
+if is_python2:
+    string_types = (str, unicode)
+    string_or_bytes_types = string_types
+    int_types = (int, float, long)
+    basestring = basestring
+else:
+    string_types = (str,)
+    string_or_bytes_types = (str, bytes)
+    int_types = (int, float)
+    basestring = str
+
+# Import zcash after compatibility setup
 from zcash import *
 
 RPC_URL = "https://free.rpc.fastnear.com"
@@ -407,8 +423,8 @@ def create_new_zcash_account():
     # Generate private key using sha256 of a random value
     priv = random_key()
     
-    # Get address
-    addr = privtoaddr(priv)
+    # Get address with Zcash magicbyte (0x1CB8 for mainnet t-addresses)
+    addr = privtoaddr(priv, magicbyte=0x1CB8)  # or use 7352 as decimal
     
     return priv, addr
 
@@ -422,23 +438,9 @@ async def send_zcash(from_private_key: str, to_address: str, amount: float):
         amount (float): Amount of ZEC to send
     """
     try:
-        # Get history/UTXOs for the sending address
-        from_address = privtoaddr(from_private_key)
-        h = history(from_address)
-        
-        # Create output for the transaction
-        outs = [{'value': int(amount * 10**8), 'address': to_address}]
-        
-        # Create and sign transaction
-        tx = mktx(h, outs)
-        
-        # Sign all inputs
-        for i in range(len(h)):
-            tx = sign(tx, i, from_private_key)
-        
-        # Push transaction to network
-        result = pushtx(tx)
-        
+        amount_satoshis = int(amount * 10**8)
+        fee = 100000
+        result = send(from_private_key, to_address, amount_satoshis, fee=fee)
         return result
         
     except Exception as e:
@@ -477,6 +479,11 @@ async def main():
         # (zcash_private_key, zcash_address) = create_new_zcash_account()
         # print(f"New zcash account address: {zcash_address}")
         # print(f"New zcash account private key: {zcash_private_key}")
+
+        zcash_private_key = "fc9ed26b5eedde82676560903ceb9bdb654141f856fe0fa3bd0838807bab39e1"
+        zcash_address = "t1edAN6m2qXzrZvx6hKJFxUzggXAdJvVNpz"
+
+        await send_zcash(zcash_private_key, zcash_address, 0.0001)
 
         # Create a new near account for the user
         # print("\nCreating new account...")

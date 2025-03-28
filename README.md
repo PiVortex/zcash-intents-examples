@@ -2,6 +2,13 @@
 
 This repo contains functions to interact with near, zcash and intents.
 
+Make sure to install al the dependencies, the zcash tools needs to be install manually by:
+
+```bash
+cd pyzcashtools
+python setup.py install
+```
+
 In main of example.py there is an example of using all these functions.
 Variables which should be fetched from the frontend are defined at the top of main.
 You should copy all the other functions.
